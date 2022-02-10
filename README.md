@@ -12,6 +12,12 @@ Please note that this is a personal project, done for fun, and may contain bugs.
 At the time of this commit, the interpreter is fairly basic, it is at the level at the end of the \
 third chapter of the book. 
 
+## Current Features: 
+- let statements: `let x = 32;`
+- if statements: `if (!!true) { 2 + 3 };`
+- return statements: `return 3;`
+- Prefix operators: `-3; !false;`
+- Inflix operators: `+`, `-`, `*`, `/`, `>`, `>=`, `<`, `<=`, `==`, `!=`
 
 ## REPL
 To run the REPL: 
