@@ -1,0 +1,28 @@
+[workspace]
+
+members = [
+    "lexer",
+    "parser", 
+    "evaluator",
+]
+
+[package]
+name = "monkey-rs"
+version = "0.1.0"
+
+[[bin]]
+name = "monkey"
+edition = "2021"
+path = "src/main.rs"
+
+[[bin]]
+name = "repl"
+edition = "2021"
+path = "src/repl.rs"
+
+[dependencies]
+rustyline = "9.1.2"
+lexer = { path = "./lexer" }
+parser = { path = "./parser" }
+evaluator = { path = "./evaluator" }
+
