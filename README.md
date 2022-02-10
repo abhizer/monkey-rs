@@ -15,6 +15,7 @@ third chapter of the book.
 ## Current Features: 
 - let statements: `let x = 32;`
 - if statements: `if (!!true) { 2 + 3 };`
+- functions: `fn (x) { 2 * x }(10);`
 - return statements: `return 3;`
 - Prefix operators: `-3; !false;`
 - Inflix operators: `+`, `-`, `*`, `/`, `>`, `>=`, `<`, `<=`, `==`, `!=`
