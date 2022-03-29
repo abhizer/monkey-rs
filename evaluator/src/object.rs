@@ -1,4 +1,4 @@
-use std::{cell::RefCell, fmt::Display, rc::Rc};
+use std::fmt::Display;
 
 use crate::environment::Environment;
 
@@ -10,7 +10,7 @@ pub enum Object {
     Function {
         identifiers: Vec<parser::ast::Identifier>,
         body: parser::ast::Program,
-        env: Rc<RefCell<Environment>>,
+        env: Environment,
     },
     Null,
 }

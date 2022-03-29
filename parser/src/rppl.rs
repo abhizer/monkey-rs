@@ -15,13 +15,13 @@ fn main() {
                 // Pass it to the lexer here
                 let l = lexer::Lexer::new(line);
                 // Pass the lexer to the Parser
-                let p = parser::Parser::new(l);
+                let mut p = parser::Parser::new(l);
 
                 match p.parse_program() {
                     Some(x) => println!("{:?}", x),
                     None => {
-                        if p.errors().borrow().len() > 0 {
-                            for error in &*p.errors().borrow() {
+                        if !p.errors().is_empty() {
+                            for error in &*p.errors() {
                                 eprintln!("{error}");
                             }
                         }

@@ -7,7 +7,7 @@ fn main() {
         println!("No previous history!");
     }
 
-    let e = evaluator::Evaluator::new();
+    let mut e = evaluator::Evaluator::new();
     loop {
         let readline = rl.readline(">>> ");
         match readline {
@@ -16,14 +16,14 @@ fn main() {
                 // Pass it to the lexer here
                 let l = lexer::Lexer::new(line);
                 // Pass the lexer to the Parser
-                let p = parser::Parser::new(l);
+                let mut p = parser::Parser::new(l);
                 let parsed = p.parse_program();
 
                 let parsed = match parsed {
                     Some(p) => p,
                     None => {
-                        if p.errors().borrow().len() > 0 {
-                            for error in &*p.errors().borrow() {
+                        if !p.errors().is_empty() {
+                            for error in &*p.errors() {
                                 eprintln!("{error}");
                             }
                         } else {

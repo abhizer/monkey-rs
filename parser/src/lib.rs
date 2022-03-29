@@ -1,87 +1,81 @@
 #![feature(let_chains)]
 pub mod ast;
 use lexer::token::Token;
-use std::cell::RefCell;
-use std::rc::Rc;
 
 #[derive(Debug)]
 pub struct Parser {
     tokens: Vec<lexer::token::Token>,
-    index: RefCell<usize>, // Index of current token
-    errors: Rc<RefCell<Vec<String>>>,
+    index: usize,
+    errors: Vec<String>,
 }
 impl Parser {
     pub fn new(lexer: lexer::Lexer) -> Self {
         Self {
             tokens: lexer.tokenize(),
-            index: RefCell::new(0),
-            errors: Rc::new(RefCell::new(Vec::new())),
+            index: 0,
+            errors: vec![],
         }
     }
 
-    fn parse_let(&self) -> Option<ast::Statement> {
-        let mut position = self.index.clone().into_inner() + 1;
-        self.index.replace(position);
+    fn parse_let(&mut self) -> Option<ast::Statement> {
+        self.index += 1;
 
-        let next_token = self.tokens.get(position)?;
+        let next_token = self.tokens.get(self.index)?.clone();
 
         let ident = match next_token {
-            Token::Ident(x) => ast::Identifier::new(x),
+            Token::Ident(ref x) => ast::Identifier::new(x),
             unexpected => {
                 self.err_unexpected_token(
                     Token::Ident("<identifier>".to_string()),
-                    unexpected.to_owned(),
+                    unexpected,
                     Token::Let,
                 );
                 return None;
             }
         };
 
-        position += 1;
-        self.index.replace(position);
+        self.index += 1;
 
-        match self.tokens.get(position) {
+        match self.tokens.get(self.index).cloned() {
             None => {
-                self.err_unexpected_token(Token::Assignment, Token::Eof, next_token.to_owned());
+                self.err_unexpected_token(Token::Assignment, Token::Eof, next_token);
                 return None;
             }
             Some(Token::Assignment) => {}
             Some(unexpected) => {
                 self.err_unexpected_token(
                     Token::Assignment,
-                    unexpected.to_owned(),
-                    next_token.to_owned(),
+                    unexpected,
+                    next_token,
                 );
             }
         }
 
-        position += 1;
-        self.index.replace(position);
+        self.index += 1;
 
         let expr = self.parse_expression(ast::Precendence::Lowest)?;
-
-        if Some(&Token::Semicolon) == self.tokens.get(position) {
-            self.index.replace(position);
-        }
 
         Some(ast::Statement::Let(ident, expr))
     }
 
-    fn parse_return(&self) -> Option<ast::Statement> {
-        let mut index = self.index.clone().into_inner();
-        self.index.replace(index + 1);
+    fn parse_return(&mut self) -> Option<ast::Statement> {
+        self.index += 1;
 
         let expr = self.parse_expression(ast::Precendence::Lowest)?;
 
-        index = self.index.clone().into_inner();
-
-        if Some(&Token::Semicolon) == self.tokens.get(index + 1) {
-            self.index.replace(index + 1);
+        if Some(&Token::Semicolon) == self.tokens.get(self.index + 1) {
+            self.index += 1;
         } else {
             self.err_unexpected_token(
                 Token::Semicolon,
-                self.tokens.get(index + 1).unwrap_or(&Token::Eof).to_owned(),
-                self.tokens.get(index).unwrap_or(&Token::Return).to_owned(),
+                self.tokens
+                    .get(self.index + 1)
+                    .unwrap_or(&Token::Eof)
+                    .to_owned(),
+                self.tokens
+                    .get(self.index)
+                    .unwrap_or(&Token::Return)
+                    .to_owned(),
             );
             return None;
         }
@@ -93,7 +87,7 @@ impl Parser {
         ast::Expression::Ident(ast::Identifier::new(t))
     }
 
-    fn parse_int_literal(&self, n: &str) -> Option<ast::Expression> {
+    fn parse_int_literal(&mut self, n: &str) -> Option<ast::Expression> {
         let num: i64 = match n.parse() {
             Ok(n) => n,
             Err(_) => {
@@ -106,9 +100,9 @@ impl Parser {
         Some(ast::Expression::Literal(ast::Literal::Int(num)))
     }
 
-    fn parse_bool_literal(&self) -> Option<ast::Expression> {
+    fn parse_bool_literal(&mut self) -> Option<ast::Expression> {
         Some(ast::Expression::Literal(ast::Literal::Bool(
-            match self.tokens.get(*self.index.borrow()) {
+            match self.tokens.get(self.index) {
                 None => return None,
                 Some(t) => match t {
                     Token::True => true,
@@ -122,9 +116,8 @@ impl Parser {
         )))
     }
 
-    fn parse_prefix(&self) -> Option<ast::Expression> {
-        let position = *self.index.borrow();
-        let prefix_operator = match self.tokens.get(position) {
+    fn parse_prefix(&mut self) -> Option<ast::Expression> {
+        let prefix_operator = match self.tokens.get(self.index) {
             Some(x) => match x {
                 Token::Bang => ast::Prefix::Not,
                 Token::Minus => ast::Prefix::Minus,
@@ -137,104 +130,122 @@ impl Parser {
             None => return None,
         };
 
-        self.index.replace(position + 1);
+        self.index += 1;
         let right = self.parse_expression(ast::Precendence::Prefix)?;
 
         Some(ast::Expression::Prefix(prefix_operator, Box::new(right)))
     }
 
-    fn parse_inflix(&self, left: ast::Expression) -> Option<ast::Expression> {
-        let index = *self.index.borrow();
-        let current_token = self.tokens.get(index)?;
-        let precendence = ast::Precendence::get_precendence(current_token);
-        self.index.replace(index + 1);
+    fn parse_inflix(&mut self, left: ast::Expression) -> Option<ast::Expression> {
+
+        let current_token = self.tokens.get(self.index)?.clone();
+        let precendence = ast::Precendence::get_precendence(&current_token);
+        self.index += 1;
+
         let right = self.parse_expression(precendence)?;
         Some(ast::Expression::Inflix {
-            operator: ast::Inflix::from_token(current_token)?,
+            operator: ast::Inflix::from_token(&current_token)?,
             left: Box::new(left),
             right: Box::new(right),
         })
     }
 
-    fn parse_grouped_expression(&self) -> Option<ast::Expression> {
-        let mut index = self.index.clone().into_inner() + 1;
-        self.index.replace(index);
+    fn parse_grouped_expression(&mut self) -> Option<ast::Expression> {
+        self.index += 1;
 
         let expr = self.parse_expression(ast::Precendence::Lowest)?;
 
-        index = self.index.clone().into_inner();
-
-        if Some(&Token::Rparen) != self.tokens.get(index + 1) {
+        if Some(&Token::Rparen) != self.tokens.get(self.index + 1) {
             self.err_unexpected_token(
                 Token::Rparen,
-                self.tokens.get(index + 1).unwrap_or(&Token::Eof).to_owned(),
-                self.tokens.get(index).unwrap_or(&Token::Lparen).to_owned(),
+                self.tokens
+                    .get(self.index + 1)
+                    .unwrap_or(&Token::Eof)
+                    .to_owned(),
+                self.tokens
+                    .get(self.index)
+                    .unwrap_or(&Token::Lparen)
+                    .to_owned(),
             );
             return None;
         }
-        self.index.replace(index + 1);
+        self.index += 1;
 
         Some(expr)
     }
 
-    fn parse_if_expression(&self) -> Option<ast::Expression> {
-        let mut index = self.index.clone().into_inner();
-        if Some(&Token::Lparen) != self.tokens.get(index + 1) {
+    fn parse_if_expression(&mut self) -> Option<ast::Expression> {
+        if Some(&Token::Lparen) != self.tokens.get(self.index + 1) {
             self.err_unexpected_token(
                 Token::Lparen,
-                self.tokens.get(index + 1).unwrap_or(&Token::Eof).to_owned(),
+                self.tokens
+                    .get(self.index + 1)
+                    .unwrap_or(&Token::Eof)
+                    .to_owned(),
                 Token::If,
             );
             return None;
         }
-        self.index.replace(index + 2); // Increase self.index by 2 as, tokens should be: If, Lparen <condition>
+        self.index += 2; // Increase self.index by 2 as, tokens should be: If, Lparen <condition>
 
         let condition = self.parse_expression(ast::Precendence::Lowest)?;
 
-        index = self.index.clone().into_inner();
-
-        if Some(&Token::Rparen) != self.tokens.get(index + 1) {
+        if Some(&Token::Rparen) != self.tokens.get(self.index + 1) {
             self.err_unexpected_token(
                 Token::Rparen,
-                self.tokens.get(index + 1).unwrap_or(&Token::Eof).to_owned(),
-                self.tokens.get(index).unwrap_or(&Token::Lparen).to_owned(),
+                self.tokens
+                    .get(self.index + 1)
+                    .unwrap_or(&Token::Eof)
+                    .to_owned(),
+                self.tokens
+                    .get(self.index)
+                    .unwrap_or(&Token::Lparen)
+                    .to_owned(),
             );
             return None;
         }
 
-        self.index.replace(index + 1); // Increase self.index by 1 as, tokens should be: Rparen Lbrace
-        index = self.index.clone().into_inner();
+        self.index += 1; // Increase self.index by 1 as, tokens should be: Rparen Lbrace
 
-        if Some(&Token::Lbrace) != self.tokens.get(index + 1) {
+        if Some(&Token::Lbrace) != self.tokens.get(self.index + 1) {
             self.err_unexpected_token(
                 Token::Lbrace,
-                self.tokens.get(index + 1).unwrap_or(&Token::Eof).to_owned(),
-                self.tokens.get(index).unwrap_or(&Token::Rparen).to_owned(),
+                self.tokens
+                    .get(self.index + 1)
+                    .unwrap_or(&Token::Eof)
+                    .to_owned(),
+                self.tokens
+                    .get(self.index)
+                    .unwrap_or(&Token::Rparen)
+                    .to_owned(),
             );
             return None;
         }
 
-        self.index.replace(index + 2); // Increase self.index by 2, So that it now points to the Expression after Lbrace
+        self.index += 2; // Increase self.index by 2, So that it now points to the Expression after Lbrace
 
         let consequence = self.parse_blocks()?;
 
-        index = self.index.clone().into_inner();
         let mut alternative = None;
 
-        if Some(&Token::Else) == self.tokens.get(index + 1) {
-            index += 1;
-            self.index.replace(index);
-            if Some(&Token::Lbrace) != self.tokens.get(index + 1) {
+        if Some(&Token::Else) == self.tokens.get(self.index + 1) {
+            self.index += 1;
+            if Some(&Token::Lbrace) != self.tokens.get(self.index + 1) {
                 self.err_unexpected_token(
                     Token::Lbrace,
-                    self.tokens.get(index + 1).unwrap_or(&Token::Eof).to_owned(),
-                    self.tokens.get(index).unwrap_or(&Token::Rparen).to_owned(),
+                    self.tokens
+                        .get(self.index + 1)
+                        .unwrap_or(&Token::Eof)
+                        .to_owned(),
+                    self.tokens
+                        .get(self.index)
+                        .unwrap_or(&Token::Rparen)
+                        .to_owned(),
                 );
                 return None;
             }
 
-            index += 2;
-            self.index.replace(index);
+            self.index += 2;
 
             alternative = self.parse_blocks();
         }
@@ -248,96 +259,87 @@ impl Parser {
         Some(ret)
     }
 
-    fn parse_blocks(&self) -> Option<ast::Program> {
+    fn parse_blocks(&mut self) -> Option<ast::Program> {
         let mut block: ast::Program = Vec::new();
 
-        while let x = self.tokens.get(self.index.clone().into_inner()) && x.is_some() && x != Some(&Token::Rbrace) {
-            let stmt = self.parse_statement(x.unwrap())?;
-            self.index.replace(self.index.clone().into_inner() + 1);
+        while let x = self.tokens.get(self.index).cloned() && x.is_some() && x != Some(Token::Rbrace) {
+            let stmt = self.parse_statement(&x.unwrap())?;
+            self.index += 1; 
             block.push(stmt);
         }
 
         Some(block)
     }
 
-    fn parse_functions(&self) -> Option<ast::Expression> {
-        let mut index = self.index.clone().into_inner();
-
-        if Some(&Token::Lparen) != self.tokens.get(index + 1) {
+    fn parse_functions(&mut self) -> Option<ast::Expression> {
+        if Some(&Token::Lparen) != self.tokens.get(self.index + 1) {
             self.err_unexpected_token(
                 Token::Lparen,
-                self.tokens.get(index + 1).unwrap_or(&Token::Eof).to_owned(),
+                self.tokens.get(self.index + 1).unwrap_or(&Token::Eof).to_owned(),
                 Token::Function,
             );
             return None;
         }
 
-        index += 1;
-        self.index.replace(index);
+        self.index += 1;
 
         let parameters = self.parse_function_parameters()?;
 
-        index = self.index.clone().into_inner() + 1;
+        self.index += 1; 
 
-        if Some(&Token::Lbrace) != self.tokens.get(index) {
+        if Some(&Token::Lbrace) != self.tokens.get(self.index) {
             self.err_unexpected_token(
                 Token::Lbrace,
-                self.tokens.get(index).unwrap_or(&Token::Eof).to_owned(),
+                self.tokens.get(self.index).unwrap_or(&Token::Eof).to_owned(),
                 Token::Rparen,
             );
             return None;
         }
 
-        index += 1;
-        self.index.replace(index);
+        self.index += 1; 
 
         let body = self.parse_blocks()?;
 
         Some(ast::Expression::Function { parameters, body })
     }
 
-    fn parse_function_parameters(&self) -> Option<Vec<ast::Identifier>> {
+    fn parse_function_parameters(&mut self) -> Option<Vec<ast::Identifier>> {
         let mut identifiers = Vec::new();
-        let mut index = self.index.clone().into_inner();
 
-        if Some(&Token::Rparen) == self.tokens.get(index + 1) {
-            self.index.replace(index + 1);
+        if Some(&Token::Rparen) == self.tokens.get(self.index + 1) {
+            self.index += 1; 
             return Some(identifiers);
         }
 
-        index += 1;
-        self.index.replace(index);
+        self.index += 1; 
 
-        match self.tokens.get(index)? {
-            Token::Ident(x) => {
+        match self.tokens.get(self.index)?.clone() {
+            Token::Ident(ref x) => {
                 identifiers.push(ast::Identifier::new(x));
-                index += 1;
-                self.index.replace(index);
+                self.index += 1;
             }
             unexpected => {
                 self.err_unexpected_token(
                     Token::Ident("<identifier>".to_string()),
-                    unexpected.to_owned(),
-                    self.tokens.get(index).unwrap_or(&Token::Eof).to_owned(),
+                    unexpected,
+                    self.tokens.get(self.index).unwrap_or(&Token::Eof).to_owned(),
                 );
                 return None;
             }
         };
 
-        while Some(&Token::Comma) == self.tokens.get(index) {
-            index += 1;
-            self.index.replace(index);
+        while Some(&Token::Comma) == self.tokens.get(self.index) {
+            self.index += 1;
 
-            match self.tokens.get(index)? {
-                Token::Ident(x) => {
+            match self.tokens.get(self.index)?.clone() {
+                Token::Ident(ref x) => {
                     identifiers.push(ast::Identifier::new(x));
-                    index += 1;
-                    self.index.replace(index);
+                    self.index += 1;
                 }
                 unexpected => {
                     self.err_unexpected_token(
                         Token::Ident("<identifier>".to_string()),
-                        unexpected.to_owned(),
+                        unexpected,
                         Token::Lparen,
                     );
                     return None;
@@ -345,12 +347,12 @@ impl Parser {
             };
         }
 
-        if Some(&Token::Rparen) != self.tokens.get(index) {
+        if Some(&Token::Rparen) != self.tokens.get(self.index) {
             self.err_unexpected_token(
                 Token::Rparen,
-                self.tokens.get(index).unwrap_or(&Token::Eof).to_owned(),
+                self.tokens.get(self.index).unwrap_or(&Token::Eof).to_owned(),
                 self.tokens
-                    .get(index - 1)
+                    .get(self.index - 1)
                     .unwrap_or(&Token::Illegal) // This should always unwrap just fine
                     .to_owned(),
             );
@@ -360,36 +362,29 @@ impl Parser {
         Some(identifiers)
     }
 
-    fn parse_call_arguments(&self) -> Option<Vec<ast::Expression>> {
+    fn parse_call_arguments(&mut self) -> Option<Vec<ast::Expression>> {
         let mut args = Vec::new();
-        let mut index = self.index.clone().into_inner();
 
-        if Some(&Token::Rparen) == self.tokens.get(index + 1) {
+        if Some(&Token::Rparen) == self.tokens.get(self.index + 1) {
             return Some(args);
         }
 
-        index += 1;
-        self.index.replace(index);
+        self.index += 1;
 
         args.push(self.parse_expression(ast::Precendence::Lowest)?);
 
-        index = self.index.clone().into_inner();
 
-        while Some(&Token::Comma) == self.tokens.get(index + 1) {
-            index += 2;
-            self.index.replace(index);
+        while Some(&Token::Comma) == self.tokens.get(self.index + 1) {
+            self.index += 2;
             args.push(self.parse_expression(ast::Precendence::Lowest)?);
-            index = self.index.clone().into_inner();
         }
 
-        index = self.index.clone().into_inner();
-
-        if Some(&Token::Rparen) != self.tokens.get(index + 1) {
+        if Some(&Token::Rparen) != self.tokens.get(self.index + 1) {
             self.err_unexpected_token(
                 Token::Rparen,
-                self.tokens.get(index + 1).unwrap_or(&Token::Eof).to_owned(),
+                self.tokens.get(self.index + 1).unwrap_or(&Token::Eof).to_owned(),
                 self.tokens
-                    .get(index)
+                    .get(self.index)
                     .unwrap_or(&Token::Illegal) // This should always unwrap just fine
                     .to_owned(),
             );
@@ -399,7 +394,7 @@ impl Parser {
         Some(args)
     }
 
-    fn parse_call_expression(&self, function: ast::Expression) -> Option<ast::Expression> {
+    fn parse_call_expression(&mut self, function: ast::Expression) -> Option<ast::Expression> {
         let arguments = self.parse_call_arguments()?;
         Some(ast::Expression::Call {
             function: Box::new(function),
@@ -407,15 +402,15 @@ impl Parser {
         })
     }
 
-    fn parse_expression(&self, precendence: ast::Precendence) -> Option<ast::Expression> {
+    fn parse_expression(&mut self, precendence: ast::Precendence) -> Option<ast::Expression> {
         let current_token = self
             .tokens
-            .get(*self.index.borrow())
-            .unwrap_or(&lexer::token::Token::Eof);
+            .get(self.index)
+            .unwrap_or(&lexer::token::Token::Eof).clone();
 
         let mut left = match current_token {
-            Token::Ident(x) => Some(self.parse_identifier(x)),
-            Token::Int(x) => self.parse_int_literal(x),
+            Token::Ident(x) => Some(self.parse_identifier(&x)),
+            Token::Int(x) => self.parse_int_literal(&x),
             Token::Bang | Token::Minus => self.parse_prefix(),
             Token::True | Token::False => self.parse_bool_literal(),
             Token::Lparen => self.parse_grouped_expression(),
@@ -423,7 +418,7 @@ impl Parser {
             Token::Function => self.parse_functions(),
             _ => return None,
         };
-        let mut index = self.index.clone().into_inner();
+        let mut index = self.index;
 
         while Some(&Token::Semicolon) != self.tokens.get(index + 1)
             && precendence
@@ -442,15 +437,15 @@ impl Parser {
                 | Token::Plus
                 | Token::Slash
                 | Token::Asterisk => {
-                    self.index.replace(index + 1);
+                    self.index = index + 1;
                     let val = self.parse_inflix(left.to_owned()?);
-                    index = self.index.clone().into_inner();
+                    index = self.index;
                     val
                 }
                 Token::Lparen => {
-                    self.index.replace(index + 1);
+                    self.index = index + 1;
                     let val = self.parse_call_expression(left.to_owned()?);
-                    index = self.index.clone().into_inner();
+                    index = self.index;
                     val
                 }
                 _ => return left,
@@ -460,16 +455,16 @@ impl Parser {
         left
     }
 
-    fn parse_expression_statement(&self) -> Option<ast::Statement> {
+    fn parse_expression_statement(&mut self) -> Option<ast::Statement> {
         let stmt = self.parse_expression(ast::Precendence::Lowest)?;
-        let index = *self.index.borrow();
+        let index = self.index;
         if Some(&Token::Semicolon) == self.tokens.get(index + 1) {
-            self.index.replace(index + 1);
+            self.index = index + 1;
         }
         Some(ast::Statement::Expr(stmt))
     }
 
-    fn parse_statement(&self, tok: &lexer::token::Token) -> Option<ast::Statement> {
+    fn parse_statement(&mut self, tok: &lexer::token::Token) -> Option<ast::Statement> {
         match tok {
             Token::Let => self.parse_let(),
             Token::Return => self.parse_return(),
@@ -477,22 +472,22 @@ impl Parser {
         }
     }
 
-    pub fn parse_program(&self) -> Option<ast::Program> {
+    pub fn parse_program(&mut self) -> Option<ast::Program> {
         let mut program: ast::Program = Vec::new();
 
-        while let Some(token) = self.tokens.get(self.index.clone().into_inner()) {
-            if let Some(x) = self.parse_statement(token) {
+        while let Some(token) = self.tokens.get(self.index).cloned() {
+            if let Some(x) = self.parse_statement(&token) {
                 program.push(x);
             }
-            self.index.replace(self.index.clone().into_inner() + 1);
+            self.index += 1;
         }
 
         if program.is_empty() {
             return None;
         }
 
-        if self.errors().borrow().len() != 0 {
-            for error in &*self.errors().borrow() {
+        if !self.errors().is_empty() {
+            for error in &*self.errors() {
                 println!("{}", error);
             }
         }
@@ -500,19 +495,19 @@ impl Parser {
         Some(program)
     }
 
-    pub fn errors(&self) -> Rc<RefCell<Vec<String>>> {
+    pub fn errors(&self) -> Vec<String> {
         self.errors.clone()
     }
 
-    fn err_unexpected_token(&self, expected: Token, got: Token, current: Token) {
-        self.errors.borrow_mut().push(format!(
+    fn err_unexpected_token(&mut self, expected: Token, got: Token, current: Token) {
+        self.errors.push(format!(
             "Parse Err: Unexpected token after {:?}! Expected: {:?} but Got {:?}",
             current, expected, got
         ));
     }
 
-    fn err_unexpected(&self, err: String) {
-        self.errors.borrow_mut().push(err);
+    fn err_unexpected(&mut self, err: String) {
+        self.errors.push(err);
     }
 }
 
@@ -532,7 +527,7 @@ mod tests {
         let foobar = 838383;";
 
         let l = lexer::Lexer::new(input.to_string());
-        let p = Parser::new(l);
+        let mut p = Parser::new(l);
 
         let expected: crate::ast::Program = Vec::from([
             crate::ast::Statement::Let(
@@ -561,7 +556,7 @@ mod tests {
                     return 44;";
 
         let l = lexer::Lexer::new(input.to_string());
-        let p = Parser::new(l);
+        let mut p = Parser::new(l);
 
         let expected: crate::ast::Program = Vec::from([
             crate::ast::Statement::Return(crate::ast::Expression::Literal(
@@ -586,7 +581,7 @@ mod tests {
         let input = "foobar;";
 
         let l = lexer::Lexer::new(input.to_string());
-        let p = Parser::new(l);
+        let mut p = Parser::new(l);
 
         let expected: crate::ast::Program = Vec::from([crate::ast::Statement::Expr(
             ast::Expression::Ident(crate::ast::Identifier::new("foobar")),
@@ -602,7 +597,7 @@ mod tests {
         let input = "5;";
 
         let l = lexer::Lexer::new(input.to_string());
-        let p = Parser::new(l);
+        let mut p = Parser::new(l);
 
         let expected: crate::ast::Program = Vec::from([crate::ast::Statement::Expr(
             ast::Expression::Literal(ast::Literal::Int(5)),
@@ -635,7 +630,7 @@ mod tests {
         ]);
 
         let l = lexer::Lexer::new(input.to_string());
-        let p = Parser::new(l);
+        let mut p = Parser::new(l);
         let output = p.parse_program().unwrap();
 
         assert_eq!(expected, output);
@@ -653,7 +648,7 @@ mod tests {
         5 != 5;";
 
         let l = lexer::Lexer::new(input.to_string());
-        let p = Parser::new(l);
+        let mut p = Parser::new(l);
 
         let five = Box::new(crate::ast::Expression::Literal(crate::ast::Literal::Int(5)));
 
@@ -708,7 +703,7 @@ mod tests {
     #[test]
     fn test_arithmetic_precedence() {
         let lexer = lexer::Lexer::new("3 * 2 - 1;".to_string());
-        let p = Parser::new(lexer);
+        let mut p = Parser::new(lexer);
         let output = p.parse_program().unwrap();
         let expected: crate::ast::Program = Vec::from([crate::ast::Statement::Expr(
             crate::ast::Expression::Inflix {
@@ -728,7 +723,7 @@ mod tests {
     #[test]
     fn test_prefix_inflix() {
         let lexer = lexer::Lexer::new("-1 + 2;".to_string());
-        let p = Parser::new(lexer);
+        let mut p = Parser::new(lexer);
         let output = p.parse_program().unwrap();
 
         let expected = Vec::from([Statement::Expr(Expression::Inflix {
@@ -749,7 +744,7 @@ mod tests {
             false;"
                 .to_string(),
         );
-        let p = Parser::new(lexer);
+        let mut p = Parser::new(lexer);
 
         let output = p.parse_program().unwrap();
 
@@ -764,7 +759,7 @@ mod tests {
     #[test]
     fn test_parenthesis() {
         let lexer = lexer::Lexer::new("(1 + 2) * 3;".to_string());
-        let p = Parser::new(lexer);
+        let mut p = Parser::new(lexer);
 
         let output = p.parse_program().unwrap();
 
@@ -784,10 +779,10 @@ mod tests {
     #[test]
     fn test_if_expression() {
         let lexer = lexer::Lexer::new("if ( x < y ) { x }".to_string());
-        let p = Parser::new(lexer);
+        let mut p = Parser::new(lexer);
         let output = p.parse_program().unwrap();
 
-        assert_eq!(p.errors().borrow().len(), 0);
+        assert_eq!(p.errors().len(), 0);
 
         let expected = Vec::from([Statement::Expr(Expression::If {
             condition: Box::new(Expression::Inflix {
@@ -804,10 +799,10 @@ mod tests {
     #[test]
     fn test_if_else_expression() {
         let lexer = lexer::Lexer::new("if ( x < y ) { x } else { y }".to_string());
-        let p = Parser::new(lexer);
+        let mut p = Parser::new(lexer);
         let output = p.parse_program().unwrap();
 
-        assert_eq!(p.errors().borrow().len(), 0);
+        assert_eq!(p.errors().len(), 0);
 
         let expected = Vec::from([Statement::Expr(Expression::If {
             condition: Box::new(Expression::Inflix {
@@ -826,7 +821,7 @@ mod tests {
     #[test]
     fn test_functions() {
         let lexer = lexer::Lexer::new("fn(x, y) { x + y; }".to_string());
-        let p = Parser::new(lexer);
+        let mut p = Parser::new(lexer);
         let output = p.parse_program().unwrap();
 
         let expected = Vec::from([Statement::Expr(Expression::Function {
@@ -844,7 +839,7 @@ mod tests {
     #[test]
     fn test_call() {
         let lexer = lexer::Lexer::new("add(x, y)".to_string());
-        let p = Parser::new(lexer);
+        let mut p = Parser::new(lexer);
 
         let output = p.parse_program().unwrap();
 

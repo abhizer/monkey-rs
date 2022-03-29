@@ -3,10 +3,9 @@ pub mod object;
 
 use environment::Environment;
 use parser::ast::{self, Expression, Inflix, Literal, Statement};
-use std::{cell::RefCell, rc::Rc, result::Result};
 
 pub struct Evaluator {
-    env: Rc<RefCell<Environment>>,
+    env: Environment,
 }
 
 impl Default for Evaluator {
@@ -18,11 +17,11 @@ impl Default for Evaluator {
 impl Evaluator {
     pub fn new() -> Self {
         Self {
-            env: Rc::new(RefCell::new(Environment::new())),
+            env: Environment::new(),
         }
     }
 
-    pub fn eval(&self, program: ast::Program) -> Result<Vec<object::Object>, String> {
+    pub fn eval(&mut self, program: ast::Program) -> Result<Vec<object::Object>, String> {
         let mut objects = Vec::new();
 
         for stmt in program {
@@ -45,10 +44,10 @@ impl Evaluator {
                     break;
                 }
                 Statement::Expr(expr) => objects.push(self.eval_expression(expr)?),
-                Statement::Let(ident, expr) => self
-                    .env
-                    .borrow_mut()
-                    .set(ident.get(), self.eval_expression(expr)?),
+                Statement::Let(ident, expr) => {
+                    let evaluated = self.eval_expression(expr)?;
+                    self.env.set(ident.get(), evaluated)
+                }
             }
         }
 
@@ -56,14 +55,14 @@ impl Evaluator {
     }
 
     fn eval_call(
-        &self,
+        &mut self,
         function: Expression,
         arguments: Vec<Expression>,
     ) -> Result<Vec<object::Object>, String> {
         match function {
             Expression::Function { parameters, body } => {
                 let identifiers = parameters;
-                let env = Rc::new(RefCell::new(Environment::new()));
+                let mut env = Environment::new();
                 if arguments.len() != identifiers.len() {
                     return Err(format!("Err: The number of arguments provided for the function isn't the same as the number of arguments the function takes!\n Provided: {} - Takes: {}", arguments.len(), identifiers.len()));
                 }
@@ -71,7 +70,7 @@ impl Evaluator {
                 let args = self.eval_expressions(arguments)?;
 
                 for (k, v) in identifiers.into_iter().zip(args) {
-                    env.borrow_mut().set(k.get(), v)
+                    env.set(k.get(), v)
                 }
 
                 let mut evaluator = Self::new();
@@ -83,7 +82,7 @@ impl Evaluator {
                 object::Object::Function {
                     identifiers,
                     body,
-                    env,
+                    mut env,
                 } => {
                     if arguments.len() != identifiers.len() {
                         return Err(format!("Err: The number of arguments provided for the function isn't the same as the number of arguments the function takes!\n Provided: {} - Takes: {}", arguments.len(), identifiers.len()));
@@ -92,7 +91,7 @@ impl Evaluator {
                     let args = self.eval_expressions(arguments)?;
 
                     for (k, v) in identifiers.into_iter().zip(args) {
-                        env.borrow_mut().set(k.get(), v)
+                        env.set(k.get(), v)
                     }
 
                     let mut evaluator = Self::new();
@@ -113,8 +112,7 @@ impl Evaluator {
         }
     }
 
-    #[inline]
-    fn eval_expressions(&self, exprs: Vec<Expression>) -> Result<Vec<object::Object>, String> {
+    fn eval_expressions(&mut self, exprs: Vec<Expression>) -> Result<Vec<object::Object>, String> {
         let mut objects = Vec::new();
         for expr in exprs {
             objects.push(self.eval_expression(expr)?);
@@ -122,7 +120,6 @@ impl Evaluator {
         Ok(objects)
     }
 
-    #[inline]
     fn eval_literals(&self, lit: Literal) -> object::Object {
         match lit {
             Literal::Int(x) => object::Object::Integer(x),
@@ -147,7 +144,7 @@ impl Evaluator {
         }
     }
 
-    fn eval_expression(&self, expression: Expression) -> Result<object::Object, String> {
+    fn eval_expression(&mut self, expression: Expression) -> Result<object::Object, String> {
         Ok(match expression {
             Expression::Literal(x) => self.eval_literals(x),
             Expression::Prefix(operator, expr) => {
@@ -178,7 +175,8 @@ impl Evaluator {
             Expression::Function { parameters, body } => object::Object::Function {
                 identifiers: parameters,
                 body,
-                env: Rc::new(RefCell::new(Environment::new())),
+
+                env: Environment::new(),
             },
             Expression::Ident(ident) => self.eval_identifier(ident)?,
             Expression::Call {
@@ -192,9 +190,8 @@ impl Evaluator {
         })
     }
 
-    #[inline]
     fn eval_identifier(&self, ident: ast::Identifier) -> Result<object::Object, String> {
-        match self.env.borrow().get(ident.get()) {
+        match self.env.get(ident.get()) {
             Some(x) => Ok(x),
             None => Err(format!(
                 "Err: Undeclared identifier {:?} used!",
@@ -268,14 +265,18 @@ impl Evaluator {
         )
     }
 
-    fn eval_if_expression(&self, expression: Expression) -> Result<Vec<object::Object>, String> {
+    fn eval_if_expression(
+        &mut self,
+        expression: Expression,
+    ) -> Result<Vec<object::Object>, String> {
         Ok(match expression {
             Expression::If {
                 condition,
                 consequence,
                 alternative,
             } => {
-                if self.is_truthy(self.eval_expression(*condition)?) {
+                let condition = self.eval_expression(*condition)?;
+                if self.is_truthy(condition) {
                     self.eval(consequence)?
                 } else {
                     match alternative {
@@ -300,11 +301,11 @@ mod tests {
 
     #[test]
     fn test_eval_literals_expression() {
-        let p = parser::Parser::new(lexer::Lexer::new("5; false 10; true;".to_string()));
+        let mut p = parser::Parser::new(lexer::Lexer::new("5; false 10; true;".to_string()));
 
-        assert!(p.errors().borrow().len() == 0);
+        assert!(p.errors().is_empty());
 
-        let evaluator = Evaluator::new();
+        let mut evaluator = Evaluator::new();
         let output = evaluator.eval(p.parse_program().unwrap()).unwrap();
 
         let expected = Vec::from([
@@ -319,7 +320,7 @@ mod tests {
 
     #[test]
     fn test_prefix() {
-        let p = parser::Parser::new(lexer::Lexer::new(
+        let mut p = parser::Parser::new(lexer::Lexer::new(
             "!true;
                 !false;
                 !5;
@@ -332,9 +333,9 @@ mod tests {
                 .to_string(),
         ));
 
-        assert!(p.errors().borrow().len() == 0);
+        assert!(p.errors().is_empty());
 
-        let evaluator = Evaluator::new();
+        let mut evaluator = Evaluator::new();
         let output = evaluator.eval(p.parse_program().unwrap()).unwrap();
 
         let expected = Vec::from([
@@ -354,7 +355,7 @@ mod tests {
 
     #[test]
     fn test_inflix() {
-        let p = parser::Parser::new(lexer::Lexer::new(
+        let mut p = parser::Parser::new(lexer::Lexer::new(
             "
                 5 + 5 + 5 + 5;
                 5 + 5 - 10;
@@ -375,9 +376,9 @@ mod tests {
             .to_string(),
         ));
 
-        assert!(p.errors().borrow().len() == 0);
+        assert!(p.errors().is_empty());
 
-        let evaluator = Evaluator::new();
+        let mut evaluator = Evaluator::new();
         let output = evaluator.eval(p.parse_program().unwrap()).unwrap();
 
         let expected = Vec::from([
@@ -403,16 +404,16 @@ mod tests {
 
     #[test]
     fn test_if_else() {
-        let p = parser::Parser::new(lexer::Lexer::new(
+        let mut p = parser::Parser::new(lexer::Lexer::new(
             "if (2 < 3) { 3 }; 
                 if (3 < 2) { 2 } else { 3 };
                 if (false) { return 4; };"
                 .to_string(),
         ));
 
-        assert!(p.errors().borrow().len() == 0);
+        assert!(p.errors().is_empty());
 
-        let evaluator = Evaluator::new();
+        let mut evaluator = Evaluator::new();
         let output = evaluator.eval(p.parse_program().unwrap()).unwrap();
 
         let expected = Vec::from([Object::Integer(3), Object::Integer(3)]);
@@ -422,22 +423,22 @@ mod tests {
 
     #[test]
     fn test_return() {
-        let p = parser::Parser::new(lexer::Lexer::new("return 3; ".to_string()));
+        let mut p = parser::Parser::new(lexer::Lexer::new("return 3; ".to_string()));
 
-        assert!(p.errors().borrow().len() == 0);
+        assert!(p.errors().is_empty());
 
-        let evaluator = Evaluator::new();
+        let mut evaluator = Evaluator::new();
         let output = evaluator.eval(p.parse_program().unwrap()).unwrap();
 
         let expected = Vec::from([Object::Return(Box::new(Object::Integer(3)))]);
 
         assert_eq!(expected, output);
 
-        let p = parser::Parser::new(lexer::Lexer::new("return !false; 2 + false;".to_string()));
+        let mut p = parser::Parser::new(lexer::Lexer::new("return !false; 2 + false;".to_string()));
 
-        assert!(p.errors().borrow().len() == 0);
+        assert!(p.errors().is_empty());
 
-        let evaluator = Evaluator::new();
+        let mut evaluator = Evaluator::new();
         let output = evaluator.eval(p.parse_program().unwrap()).unwrap();
 
         let expected = Vec::from([Object::Return(Box::new(Object::Bool(true)))]);
@@ -447,13 +448,13 @@ mod tests {
 
     #[test]
     fn test_let() {
-        let p = parser::Parser::new(lexer::Lexer::new(
+        let mut p = parser::Parser::new(lexer::Lexer::new(
             " let x = 434; let b = 433; x - b;".to_string(),
         ));
 
-        assert!(p.errors().borrow().len() == 0);
+        assert!(p.errors().is_empty());
 
-        let evaluator = Evaluator::new();
+        let mut evaluator = Evaluator::new();
         let output = evaluator.eval(p.parse_program().unwrap()).unwrap();
 
         let expected = Vec::from([Object::Integer(1)]);
@@ -463,13 +464,13 @@ mod tests {
 
     #[test]
     fn test_function_calls() {
-        let p = parser::Parser::new(lexer::Lexer::new(
+        let mut p = parser::Parser::new(lexer::Lexer::new(
             "let add = fn (x, y) { return x + y; }; let x = 2; add(x + 2, 3 + 3);".to_string(),
         ));
 
-        assert!(p.errors().borrow().len() == 0);
+        assert!(p.errors().is_empty());
 
-        let evaluator = Evaluator::new();
+        let mut evaluator = Evaluator::new();
         let output = evaluator.eval(p.parse_program().unwrap()).unwrap();
 
         let expected = Vec::from([Object::Return(Box::new(Object::Integer(10)))]);
